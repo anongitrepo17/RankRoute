@@ -1,34 +1,77 @@
-# Modular Reranker
+# Query-Adaptive Listwise Reranking (RankRoute)
 
 ## Overview
 
-`modular_reranker.py` extends `modular_train_allrank.py` with an integrated reranking pipeline. It:
+This repository implements the framework proposed in our paper on
+**query-adaptive listwise reranking**. Instead of deploying a single
+loss-trained ranker globally, we reframe inference as a **per-query
+selection problem** over a finite candidate set of complete ranked
+lists.
 
-1. **Trains a base ranker** using the modular framework (transformer, loss function, etc.)
-2. **Trains a transformer-based reranker** on the base ranker's predictions
-3. **Evaluates on test set** with metrics before and after reranking
-4. **Saves results** to `preds/{dataset}/{loss_type}/reranking_results_fold{N}.json`
+For each query: 1. A **base ranker** is trained using the modular
+framework. 2. A **candidate set of ranked lists** is constructed. 3. A
+**Transformer-based selector** evaluates each query--list pair. 4. The
+selector chooses the ranking expected to maximize a target metric (e.g.,
+NDCG or MRR). 5. Metrics are reported **before and after selection**.
+
+This framework supports:
+
+-   **Intra-model reranking**: structured perturbations of a single
+    baseline ranking.
+-   **Inter-model routing**: selection among outputs of multiple rankers
+    trained with different surrogate losses.
+
+The method separates two concepts emphasized in the paper:
+
+-   **Coverage**: whether a better ranking exists in the candidate set.
+-   **Selection**: whether the learned selector can identify that
+    ranking.
+
+------------------------------------------------------------------------
 
 ## Key Differences from Base Training
 
 ### Training Phase
-- **Base ranker**: Trained normally using specified loss function
-- **Reranker training**: 
-  - Takes base ranker predictions as input
-  - Constructs ideal rankings (sorted by labels) + N-1 random shuffles
-  - Trains transformer to identify ideal rankings
-  - Uses only base scores (not document features)
+
+-   **Base ranker**:
+    -   Trained normally using the specified surrogate loss.
+    -   Produces predicted scores and induced ranked lists per query.
+-   **Selector training**:
+    -   Takes candidate ranked lists as input.
+    -   Learns to approximate the candidate-oracle (the best ranking
+        within the candidate set under the target metric).
+    -   Operates over complete ranked lists.
+    -   Uses inference-time features derived from ranker scores and
+        available query/document signals.
 
 ### Test Phase
-- **Original ranking**: From base ranker predictions
-- **Reranked ranking**: Selected by trained reranker from candidates
-- **Metrics**: NDCG@5, NDCG@10, MRR@5, MRR@10 before and after reranking
+
+For each query:
+
+-   **Original ranking**: Produced by the baseline ranker.
+-   **Selected ranking**: Chosen by the trained selector from the
+    candidate set.
+-   **Metrics computed**:
+    -   NDCG@5
+    -   NDCG@10
+    -   MRR@5
+    -   MRR@10
+
+Performance is evaluated using per-query paired comparisons as described
+in the paper.
+
+------------------------------------------------------------------------
 
 ## Architecture
 
 ### RerankerConfig
-Centralized configuration for reranker hyperparameters:
-```python
+
+The selector is implemented as a Transformer encoder operating over
+document sequences induced by candidate rankings.
+
+Hyperparameters (unchanged from the original README):
+
+``` python
 TRANSFORMER_D_MODEL = 256
 TRANSFORMER_NHEAD = 4
 TRANSFORMER_NUM_LAYERS = 2
@@ -39,40 +82,51 @@ LEARNING_RATE = 1e-4
 NUM_EPOCHS = 5
 ```
 
+The Transformer produces a scalar score per candidate list.\
+The highest-scoring candidate is selected per query.
+
+------------------------------------------------------------------------
+
+## Core Components
+
 ### RerankerTrainer
-Handles reranker training and inference:
-- `train_on_predictions()`: Train on captured predictions
-- `rerank_predictions()`: Apply reranking to test predictions
+
+Responsible for selector training and inference:
+
+-   `train_on_predictions()` --- trains the selector on generated
+    candidate lists.
+-   `rerank_predictions()` --- applies selection at inference time.
 
 ### ModularRerankerFramework
-Orchestrates the full pipeline:
-- `train_with_reranking()`: Main training method
-- `_evaluate_with_reranking()`: Compute metrics before/after
-- `_save_results()`: Save results to JSON
+
+Coordinates the end-to-end pipeline:
+
+-   `train_with_reranking()` --- trains baseline + selector.
+-   `_evaluate_with_reranking()` --- computes metrics before/after
+    selection.
+-   `_save_results()` --- serializes results to JSON.
+
+------------------------------------------------------------------------
 
 ## Usage
 
 ### Basic Usage
-```bash
+
+``` bash
 python modular_reranker.py --config configs/modular_config.json --ranker transformer --loss ranknet
 ```
 
-### With Custom Reranker Parameters
-```bash
-python modular_reranker.py \
-    --config configs/modular_config.json \
-    --ranker transformer \
-    --loss ranknet \
-    --reranker_d_model 256 \
-    --reranker_nhead 4 \
-    --reranker_num_layers 2 \
-    --reranker_epochs 5 \
-    --reranker_lr 1e-4
+### With Custom Selector Parameters
+
+``` bash
+python modular_reranker.py     --config configs/modular_config.json     --ranker transformer     --loss ranknet     --reranker_d_model 256     --reranker_nhead 4     --reranker_num_layers 2     --reranker_epochs 5     --reranker_lr 1e-4
 ```
 
 ### Cross-Validation
+
 Enable in config file:
-```json
+
+``` json
 {
     "cross_validation": {
         "enabled": true,
@@ -82,60 +136,55 @@ Enable in config file:
 }
 ```
 
+------------------------------------------------------------------------
+
 ## Output Format
 
-Results saved to `preds/{dataset}/{loss_type}/reranking_results_fold{N}.json`:
+Results are saved to:
 
-```json
+    preds/{dataset}/{loss_type}/reranking_results_fold{N}.json
+
+Example structure:
+
+``` json
 {
     "queries_evaluated": 157,
     "metrics_before": {
-        "ndcg@5": [0.5, 0.6, ...],
-        "ndcg@10": [0.7, 0.8, ...],
-        "mrr@5": [0.8, 0.9, ...],
-        "mrr@10": [0.85, 0.95, ...]
+        "ndcg@5": [],
+        "ndcg@10": [],
+        "mrr@5": [],
+        "mrr@10": []
     },
     "metrics_after": {
-        "ndcg@5": [0.52, 0.62, ...],
-        "ndcg@10": [0.72, 0.82, ...],
-        "mrr@5": [0.82, 0.92, ...],
-        "mrr@10": [0.87, 0.97, ...]
+        "ndcg@5": [],
+        "ndcg@10": [],
+        "mrr@5": [],
+        "mrr@10": []
     },
     "summary": {
         "ndcg@5_before": 0.5500,
         "ndcg@5_after": 0.5700,
-        "ndcg@5_improvement": 0.0200,
-        "ndcg@10_before": 0.7500,
-        "ndcg@10_after": 0.7700,
-        "ndcg@10_improvement": 0.0200,
-        "mrr@5_before": 0.8200,
-        "mrr@5_after": 0.8400,
-        "mrr@5_improvement": 0.0200,
-        "mrr@10_before": 0.8700,
-        "mrr@10_after": 0.8900,
-        "mrr@10_improvement": 0.0200
+        "ndcg@5_improvement": 0.0200
     }
 }
 ```
 
+------------------------------------------------------------------------
+
 ## Integration with Existing Pipeline
 
-The script reuses components from:
-- `modular_train_allrank.py`: Base training framework
-- `reranker_transformer_loss.py`: Transformer evaluator and loss
-- `ranker.py`: Base ranker implementation
+This module builds upon:
 
-## Future Enhancements
+-   `modular_train_allrank.py` --- baseline ranker training
+-   `reranker_transformer_loss.py` --- selector architecture and loss
+-   `ranker.py` --- base ranking models
 
-1. **Capture training predictions**: Modify ranker to save predictions during training
-2. **Validation set reranker training**: Use validation predictions for reranker training
-3. **Multiple reranker architectures**: Support MLP, attention-based alternatives
-4. **Hyperparameter tuning**: Grid search over reranker parameters
-5. **Ensemble reranking**: Combine multiple reranker predictions
+------------------------------------------------------------------------
 
 ## Notes
 
-- Reranker trains on base scores only (not document features) for efficiency
-- Ideal ranking always placed as first candidate during training
-- Test-time reranking generates original ranking + N-1 random shuffles
-- Results automatically saved with proper JSON serialization
+-   The selector operates at the level of complete ranked lists.
+-   Baseline containment is enforced in candidate construction.
+-   The framework supports both structured perturbation (intra-model)
+    and multi-ranker routing (inter-model).
+-   Statistical testing follows the methodology described in the paper.

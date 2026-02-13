@@ -73,9 +73,6 @@ class RerankerConfig:
     PAIR_WEIGHT_BY_DELTA = True  # emphasize bigger NDCG gaps
     DELTA_EPS = 1e-6
     
-    # Safe reranking: only apply reranking if it improves NDCG
-    SAFE_RERANKING = True        # If True, fallback to original ranking when reranking hurts NDCG (ORACLE - not valid for publication)
-    SAFE_RERANKING_K = 10        # k value to use for safety check (typically same as NDCG_K)
     
     # Confidence-based safety (valid for publication - no oracle)
     CONFIDENCE_BASED_SAFETY = False   # If True, fallback to original when model has low confidence
@@ -311,17 +308,17 @@ class RerankerTrainer:
         Rerank predictions using trained reranker
         
         Args:
-            labels: relevance labels (used for ORACLE safety check if SAFE_RERANKING=True - not recommended)
+            labels: relevance labels
             predictions: base model scores
             doc_features: document features (N x feat_dim)
             num_candidates: number of candidate rankings to generate (default: use config)
             debug: whether to print debug information
         
         Returns:
-            Tuple of (reranked_indices, reranker_score, safety_fallback_used)
-            - reranked_indices: ranking to use (may be original if safety/confidence check fails)
+            Tuple of (reranked_indices, reranker_score, confidence_fallback_used)
+            - reranked_indices: ranking to use (may be original if confidence check fails)
             - reranker_score: score from reranker model
-            - safety_fallback_used: True if we fell back to original ranking
+            - confidence_fallback_used: True if we fell back to original ranking due to low confidence
         """
         self.model.eval()
         
@@ -390,26 +387,6 @@ class RerankerTrainer:
                     print(f"  CONFIDENCE FALLBACK: gap={normalized_gap:.4f} < {self.config.CONFIDENCE_THRESHOLD}, "
                           f"entropy={entropy:.4f} > {self.config.CONFIDENCE_ENTROPY_THRESHOLD}")
         
-        # Oracle-based safety check (NOT VALID FOR PUBLICATION - only for debugging)
-        safety_fallback_used = False
-        if self.config.SAFE_RERANKING and labels is not None:
-            # Compute NDCG for original and reranked
-            k = self.config.SAFE_RERANKING_K
-            
-            original_labels_ranked = labels[original_ranking[:k]]
-            original_ndcg = compute_ndcg(original_labels_ranked, labels_all=labels, k=k)
-            
-            reranked_labels_ranked = labels[reranked[:k]]
-            reranked_ndcg = compute_ndcg(reranked_labels_ranked, labels_all=labels, k=k)
-            
-            # If reranking hurts NDCG, fall back to original
-            if reranked_ndcg < original_ndcg and not confidence_fallback_used:
-                reranked = original_ranking
-                safety_fallback_used = True
-                
-                if debug:
-                    print(f"  ORACLE SAFETY FALLBACK: Reranked NDCG@{k}={reranked_ndcg:.4f} < Original NDCG@{k}={original_ndcg:.4f}")
-        
         if debug:
             # Compute actual NDCG for each candidate for comparison
             from modular_reranker import compute_ndcg as compute_ndcg_fn
@@ -423,15 +400,11 @@ class RerankerTrainer:
             print(f"  Actual NDCG@10: {[f'{n:.4f}' for n in actual_ndcgs]}")
             print(f"  Best candidate index: {best_idx} (0=original, 1-{num_candidates-1}=shuffled)")
             print(f"  Model picked NDCG={actual_ndcgs[best_idx]:.4f}, Best possible={max(actual_ndcgs):.4f}")
-            print(f"  Original kept: {best_idx == 0 or confidence_fallback_used or safety_fallback_used}")
+            print(f"  Original kept: {best_idx == 0 or confidence_fallback_used}")
             if confidence_fallback_used:
-                print(f"  Confidence fallback: YES (valid - no oracle)")
-            if safety_fallback_used:
-                print(f"  Oracle safety fallback: YES (invalid - uses labels)")
+                print(f"  Confidence fallback: YES")
         
-        # Return combined fallback status
-        any_fallback_used = confidence_fallback_used or safety_fallback_used
-        return reranked, reranker_score, any_fallback_used
+        return reranked, reranker_score, confidence_fallback_used
 
 
 # ============================================================
@@ -778,7 +751,6 @@ class ModularRerankerFramework:
         
         queries_evaluated = 0
         queries_changed = 0  # Track how many queries had rankings changed
-        queries_safety_fallback = 0  # Track how many used safety fallback
         
         # Process test predictions in batches
         for batch_start in range(0, len(test_predictions), config.BATCH_SIZE):
@@ -805,8 +777,8 @@ class ModularRerankerFramework:
                     # Original ranking
                     orig_ranking = np.argsort(-predictions)
                     
-                    # Reranked ranking (with features and safety check)
-                    reranked_ranking, reranker_score, safety_fallback = reranker.rerank_predictions(
+                    # Reranked ranking (with features)
+                    reranked_ranking, reranker_score, confidence_fallback = reranker.rerank_predictions(
                         labels, predictions, doc_features=doc_features, debug=debug_mode
                     )
                     
@@ -814,13 +786,9 @@ class ModularRerankerFramework:
                     ranking_changed = not np.array_equal(orig_ranking, reranked_ranking)
                     if ranking_changed:
                         queries_changed += 1
-                    if safety_fallback:
-                        queries_safety_fallback += 1
                     
                     if debug_mode:
                         logger.info(f"  Ranking changed: {ranking_changed}")
-                        if safety_fallback:
-                            logger.info(f"  Safety fallback used: YES")
                     
                     # Compute metrics
                     query_metrics = compute_metrics_before_after(
@@ -847,9 +815,6 @@ class ModularRerankerFramework:
         if queries_evaluated > 0:
             logger.info(f"  Queries where ranking changed: {queries_changed} ({100*queries_changed/queries_evaluated:.1f}%)")
             logger.info(f"  Queries where ranking kept original: {queries_evaluated - queries_changed} ({100*(queries_evaluated-queries_changed)/queries_evaluated:.1f}%)")
-            if config.SAFE_RERANKING:
-                logger.info(f"  Safety fallbacks (reranking would hurt): {queries_safety_fallback} ({100*queries_safety_fallback/queries_evaluated:.1f}%)")
-                logger.info(f"  Net improvements (changed - fallbacks): {queries_changed - queries_safety_fallback} ({100*(queries_changed - queries_safety_fallback)/queries_evaluated:.1f}%)")
         else:
             logger.info("  WARNING: No queries were successfully evaluated!")
         logger.info("")
@@ -858,8 +823,6 @@ class ModularRerankerFramework:
         results = {
             'queries_evaluated': queries_evaluated,
             'queries_changed': queries_changed,
-            'queries_safety_fallback': queries_safety_fallback,
-            'safe_reranking_enabled': config.SAFE_RERANKING,
             'summary': {}
         }
         
