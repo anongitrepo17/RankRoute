@@ -1,0 +1,7 @@
+{
+    "ranker_type": "transformer",
+    "loss_type": "lrcl",
+    "base_config": "blackbox_WEB10K.json",
+    "description": "Transformer ranker with softndcg loss and pair subsampling"
+  }
+  

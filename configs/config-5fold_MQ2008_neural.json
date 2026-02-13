@@ -1,0 +1,128 @@
+{
+  "model": {
+    "fc_model": {
+      "sizes": [
+        128
+      ],
+      "input_norm": false,
+      "activation": null,
+      "dropout": 0.2
+    },
+    "transformer": {
+      "N": 1,
+      "d_ff": 512,
+      "h": 4,
+      "positional_encoding": null,
+      "dropout": 0.0
+    },
+    "post_model": {
+      "output_activation": "Softmax",
+      "d_output": 1
+    }
+  },
+  "alter_models": {
+    "mlp": {
+      "fc_model": {
+        "sizes": [256, 256],
+        "input_norm": false,
+        "activation": "Tanh",
+        "dropout": 0.0
+      },
+      "post_model": {
+        "output_activation": "Sigmoid",
+        "d_output": 1
+      }
+    },
+    "set_transformer":{
+      "fc_model": {
+        "sizes": [256, 256],
+        "input_norm": false,
+        "activation": "Tanh",
+        "dropout": 0.0
+      },
+      "encoder": {
+        "layer_nums": 2,
+        "head_nums": 4
+      },
+      "post_model": {
+        "output_activation": "Sigmoid",
+        "d_output": 1
+      }
+    },
+    "mil_att":{
+      "fc_model": {
+        "sizes": [256, 256],
+        "input_norm": false,
+        "activation": "Tanh",
+        "dropout": 0.0
+      },
+      "post_model": {
+        "output_activation": "Sigmoid",
+        "d_output": 1
+      }
+    },
+    "mil_gate_att":{
+      "fc_model": {
+        "sizes": [256, 256],
+        "input_norm": false,
+        "activation": "Tanh",
+        "dropout": 0.0
+      },
+      "post_model": {
+        "output_activation": "Sigmoid",
+        "d_output": 1
+      }
+    },
+    "attsets":{
+      "fc_model": {
+        "sizes": [256, 256],
+        "input_norm": false,
+        "activation": "Tanh",
+        "dropout": 0.0
+      },
+      "post_model": {
+        "output_activation": "Sigmoid",
+        "d_output": 1
+      }
+    }
+  },
+  "data": {
+    "path": "dataset/MQ2008/Fold{fold}",
+    "validation_ds_role": "vali",
+    "num_workers": 1,
+    "batch_size": 64,
+    "slate_length": 50
+  },
+  "cross_validation": {
+    "enabled": true,
+    "folds": [1, 2, 3, 4, 5],
+    "seeds": [1]
+  },
+  "optimizer": {
+    "name": "Adam",
+    "args": {
+      "lr": 0.001
+    }
+  },
+  "lr_scheduler": {
+    "name": "StepLR",
+    "args": {
+      "step_size": 3,
+      "gamma": 0.5
+    }
+  },
+  "training": {
+    "epochs": 20,
+    "early_stopping_patience": 3,
+    "gradient_clipping_norm": null
+  },
+  "val_metric": "ndcg_10",
+  "metrics": ["ndcg_5", "ndcg_10"],
+  "test_metrics": ["ndcg_1", "ndcg_3", "ndcg_5", "ndcg_10", "recall_1", "recall_3", "recall_5", "recall_10", "mrr_1", "mrr_3", "mrr_5", "mrr_10", "precision_1", "precision_3", "precision_5", "precision_10"],
+  "loss": {"name": "", "args": {}},
+  "expected_metrics" : {
+    "val": {
+      "ndcg_5": 0.9
+    }
+  }
+}

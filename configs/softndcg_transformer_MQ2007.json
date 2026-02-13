@@ -1,0 +1,7 @@
+{
+    "ranker_type": "transformer",
+    "loss_type": "rmse",
+    "base_config": "blackbox_MQ2007.json",
+    "description": "Transformer ranker with softndcg loss and pair subsampling"
+  }
+  

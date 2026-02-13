@@ -1,0 +1,18 @@
+{
+  "ranker_type": "transformer",
+  "loss_type": "neural",
+  "base_config": "config-5fold_MQ2007_neural.json",
+  "loss_params": {
+    "metric": "dcg",
+    "epochs": 20,
+    "lr": 0.001,
+    "batch_size": 32,
+    "num_seqs": 1000,
+    "target_type": 5,
+    "model_dim": 64,
+    "num_heads": 4,
+    "num_layers": 2,
+    "out_active": "relu"
+  },
+  "description": "Neural loss configuration with transformer ranker for WEB10K dataset"
+}
